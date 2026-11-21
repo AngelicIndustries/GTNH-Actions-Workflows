@@ -1,0 +1,41 @@
+name: Sync with GTNH
+
+# Daily: merges GTNewHorizons/GTNH-Actions-Workflows into this fork, which only adds a step that fetches the OvermindDL1
+# mirror from the Angelic Maven. A merge that conflicts opens an issue here. Uses the Angelic CI Bot, since the merge
+# changes workflow files.
+on:
+  schedule:
+    - cron: "41 4 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Get the bot App's token
+        id: app
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ secrets.MAINTENANCE_APP_ID }}
+          private-key: ${{ secrets.MAINTENANCE_APP_PRIVATE_KEY }}
+
+      - name: Merge GTNH's master
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+          REPO: ${{ github.repository }}
+          RUN: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          title="Syncing with GTNH failed"
+          open=$(gh issue list -R "$REPO" --state open --search "\"$title\" in:title" --json number --jq '.[0].number // empty')
+          if out=$(gh api -X POST "repos/$REPO/merge-upstream" -f branch=master 2>&1); then
+            echo "$out"
+            [ -n "$open" ] && gh issue close "$open" -R "$REPO" --comment "Synced again: $RUN"
+            exit 0
+          fi
+          echo "$out"
+          body=$(printf 'Merging GTNewHorizons/GTNH-Actions-Workflows into this fork failed: %s\n\nMerge it by hand and keep the Angelic Maven mirror steps.\n\n```\n%s\n```' "$RUN" "$out")
+          [ -z "$open" ] && gh issue create -R "$REPO" --title "$title" --body "$body"
+          exit 1
