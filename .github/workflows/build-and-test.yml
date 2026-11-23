@@ -260,11 +260,23 @@ jobs:
         FIXED_BRANCH: ${{ github.head_ref }}-spotless-fixes
         PR_NUMBER: ${{ github.event.pull_request.number }}
 
+    # FalsePatternLib's DepLoader downloads libraries when the server starts, inside the runServer timeout. It keeps them
+    # in MINECRAFT_SHARED_DATA_DIR/falsepattern, which is cached here so later runs start without downloading them.
+    - name: Restore the DepLoader libraries
+      id: deploader-restore
+      if: ${{ !inputs.client-only }}
+      uses: actions/cache/restore@v5
+      with:
+        path: ${{ runner.temp }}/minecraft-shared/falsepattern
+        key: deploader-v1-${{ hashFiles('dependencies.gradle', 'gradle.properties', 'build.gradle', 'build.gradle.kts') }}
+        restore-keys: deploader-v1-
+
     - name: Run server for up to ${{ inputs.timeout }} seconds
       id: run_server
       if: ${{ !inputs.client-only }}
       shell: bash
       env:
+        MINECRAFT_SHARED_DATA_DIR: ${{ runner.temp }}/minecraft-shared
         HORIZONQA: ${{ inputs.horizonqa }}
         HORIZONQA_TESTS: ${{ inputs.horizonqa-tests }}
         HORIZONQA_ALLOW_NO_TESTS: ${{ inputs.horizonqa-allow-no-tests }}
@@ -304,6 +316,15 @@ jobs:
           server_stdin=run/stop.txt
         fi
         timeout ${{ inputs.timeout }} ./gradlew "${gradle_args[@]}" 2>&1 < "${server_stdin}" | tee -a server.log || true
+
+    # Saved even when the server didn't finish starting, so the next run doesn't download the same libraries again
+    - name: Save the DepLoader libraries
+      if: ${{ !inputs.client-only && steps.run_server.conclusion == 'success' && steps.deploader-restore.outputs.cache-hit != 'true' }}
+      continue-on-error: true
+      uses: actions/cache/save@v5
+      with:
+        path: ${{ runner.temp }}/minecraft-shared/falsepattern
+        key: ${{ steps.deploader-restore.outputs.cache-primary-key }}
 
     - name: Upload Horizon-QA reports
       if: ${{ always() && !inputs.client-only && inputs.horizonqa && steps.run_server.conclusion != 'skipped' }}
